@@ -107,10 +107,11 @@ pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
 gui.Parent = getGuiParent()
 
 ---------------------------------------------------------------------
--- HUD: FPS / PING COUNTER
+-- HUD: FPS / PING COUNTER (справа сверху)
 ---------------------------------------------------------------------
 local statsFrame = make("Frame", {
-    Position = UDim2.fromOffset(15, 15),
+    AnchorPoint = Vector2.new(1, 0),
+    Position = UDim2.new(1, -15, 0, 15),
     Size = UDim2.fromOffset(200, 32),
     BackgroundColor3 = PANEL, BorderSizePixel = 0, ZIndex = 100,
 }, gui)
@@ -131,8 +132,11 @@ connect(RS.RenderStepped, function()
         currentFps = frameCount
         frameCount = 0
         lastCheck = now
-        
-        local ping = math.floor((Stats.Network.ServerStatsItem["Data Ping"]:GetValue() or 0))
+
+        local ping = 0
+        pcall(function()
+            ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() or 0)
+        end)
         local plrCount = #Players:GetPlayers()
         statsLbl.Text = string.format("FPS: %d  |  Ping: %dms  |  Plrs: %d", currentFps, ping, plrCount)
     end
@@ -148,6 +152,7 @@ local originalLighting = {
     Ambient = Lighting.Ambient,
 }
 local optimizedParts = {}
+local fpsConn = nil
 
 local function setFPSBoost(on)
     if on then
@@ -178,8 +183,11 @@ local function setFPSBoost(on)
         end
 
         for _, obj in ipairs(workspace:GetDescendants()) do optimizePart(obj) end
-        connect(workspace.DescendantAdded, optimizePart)
+        if fpsConn then fpsConn:Disconnect() end
+        fpsConn = workspace.DescendantAdded:Connect(optimizePart)
     else
+        if fpsConn then fpsConn:Disconnect() fpsConn = nil end
+
         Lighting.GlobalShadows = originalLighting.GlobalShadows
         Lighting.FogEnd = originalLighting.FogEnd
         Lighting.Brightness = originalLighting.Brightness
@@ -297,36 +305,37 @@ local invSeat, invWeld
 local savedTransparency = {}
 
 local function setInvisible(on)
-    local char = LP.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local torso = char and (char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso"))
-    if not (char and root and torso) then return end
-
-    if on then
-        local saved = root.CFrame
-        root.CFrame = CFrame.new(-25.95, 84, 3537.55)
-        task.wait(0.15)
-        invSeat = make("Seat", {
-            Name = "NovaSeat", Anchored = false, CanCollide = false,
-            Transparency = 1, Position = Vector3.new(-25.95, 84, 3537.55),
-        }, workspace)
-        invWeld = make("Weld", { Part0 = invSeat, Part1 = torso }, invSeat)
-        task.wait()
-        invSeat.CFrame = saved
-
-        for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("BasePart") or d:IsA("Decal") then
-                savedTransparency[d] = d.Transparency
-                if d.Name ~= "HumanoidRootPart" then d.Transparency = 0.6 end
-            end
-        end
-    else
+    if not on then
         if invWeld then invWeld:Destroy() invWeld = nil end
         if invSeat then invSeat:Destroy() invSeat = nil end
         for part, tr in pairs(savedTransparency) do
             if part and part.Parent then part.Transparency = tr end
         end
         savedTransparency = {}
+        return
+    end
+
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local torso = char and (char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso"))
+    if not (char and root and torso) then return end
+
+    local saved = root.CFrame
+    root.CFrame = CFrame.new(-25.95, 84, 3537.55)
+    task.wait(0.15)
+    invSeat = make("Seat", {
+        Name = "NovaSeat", Anchored = false, CanCollide = false,
+        Transparency = 1, Position = Vector3.new(-25.95, 84, 3537.55),
+    }, workspace)
+    invWeld = make("Weld", { Part0 = invSeat, Part1 = torso }, invSeat)
+    task.wait()
+    invSeat.CFrame = saved
+
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") or d:IsA("Decal") then
+            savedTransparency[d] = d.Transparency
+            if d.Name ~= "HumanoidRootPart" then d.Transparency = 0.6 end
+        end
     end
 end
 
@@ -917,28 +926,65 @@ connect(UIS.InputBegan, function(i, gp)
     end
 end)
 
+-- Полная выгрузка скрипта. Каждый шаг в pcall, чтобы одна ошибка
+-- не мешала остальным шагам и удалению GUI.
+local unloading = false
 local function unload()
+    if unloading then return end
+    unloading = true
+
+    local function safe(f, ...)
+        local ok, err = pcall(f, ...)
+        if not ok then warn("[NovaHub unload] " .. tostring(err)) end
+    end
+
+    -- 1. Останавливаем все функции
+    local wasInvisible = state.inv
     state.fly, state.noclip, state.aim, state.esp, state.ijump, state.fpsBoost = false, false, false, false, false, false
     state.speedOn, state.jumpOn, state.fovOn, state.tracers, state.expandHitbox = false, false, false, false, false
     state.antiAfk, state.autoPick, state.antiVoid, state.fullbright = false, false, false, false
-    stopFly()
-    setFPSBoost(false)
-    setFullbright(false)
-    resetHitboxes()
-    pcall(function()
+    state.inv = false
+
+    -- 2. Отключаем все подключения (циклы больше не работают)
+    for _, c in ipairs(connections) do
+        safe(function() c:Disconnect() end)
+    end
+    connections = {}
+    if fpsConn then
+        safe(function() fpsConn:Disconnect() end)
+        fpsConn = nil
+    end
+
+    -- 3. Возвращаем всё как было
+    safe(stopFly)
+    safe(setFPSBoost, false)
+    safe(setFullbright, false)
+    safe(resetHitboxes)
+    if wasInvisible then safe(setInvisible, false) end
+    safe(function()
         local h = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
-        if h then h.WalkSpeed = 16 h.JumpPower = 50 end
+        if h then
+            h.WalkSpeed = 16
+            h.UseJumpPower = true
+            h.JumpPower = 50
+        end
         workspace.CurrentCamera.FieldOfView = 70
     end)
-    if state.inv then state.inv = false pcall(setInvisible, false) end
-    for p in pairs(espObjs) do removeESP(p) end
-    for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
-    connections = {}
-    pcall(function() gui:Destroy() end)
+
+    -- 4. Удаляем ESP и линии трейсеров
+    local list = {}
+    for p in pairs(espObjs) do list[#list + 1] = p end
+    for p in pairs(tracerObjs) do list[#list + 1] = p end
+    for _, p in ipairs(list) do safe(removeESP, p) end
+
+    -- 5. Удаляем интерфейс
+    safe(function() gui:Destroy() end)
     env.NovaUnload = nil
 end
 env.NovaUnload = unload
-unloadBtn.MouseButton1Click:Connect(unload)
+unloadBtn.MouseButton1Click:Connect(function()
+    task.spawn(unload)
+end)
 
 ---------------------------------------------------------------------
 -- KEY SYSTEM & SPLASH LOADER
