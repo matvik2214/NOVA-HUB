@@ -56,7 +56,7 @@ local state = {
     jumpPower = 100,
     camFov = 90,
 
-    expandHitbox = false, hitboxSize = 8,
+    expandHitbox = false, hitboxSize = 8, hitboxHead = false,
     tracers = false,
     fullbright = false,
     antiAfk = false,
@@ -390,17 +390,79 @@ local function getTarget()
     return best
 end
 
--- Функция сброса хитбоксов при выключении
-local function resetHitboxes()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            local hrp = p.Character.HumanoidRootPart
-            hrp.Size = Vector3.new(2, 2, 1) -- Стандартный размер туловища в Roblox
-            hrp.Transparency = 1 -- Стандартная невидимость HRP
-            hrp.CanCollide = true
-        end
+-- Расширение хитбоксов: оригинальные параметры частей запоминаются
+-- и восстанавливаются при выключении / смерти игрока / выгрузке.
+local hitboxBackup = {}
+
+local function expandPart(part, size)
+    if not hitboxBackup[part] then
+        hitboxBackup[part] = {
+            Size = part.Size,
+            Transparency = part.Transparency,
+            CanCollide = part.CanCollide,
+            Massless = part.Massless,
+        }
+    end
+    part.Size = Vector3.new(size, size, size)
+    part.Transparency = 0.7
+    part.CanCollide = false
+    part.Massless = true
+end
+
+local function restorePart(part)
+    local b = hitboxBackup[part]
+    if not b then return end
+    hitboxBackup[part] = nil
+    if part.Parent then
+        pcall(function()
+            part.Size = b.Size
+            part.Transparency = b.Transparency
+            part.CanCollide = b.CanCollide
+            part.Massless = b.Massless
+        end)
     end
 end
+
+-- Функция сброса хитбоксов при выключении
+local function resetHitboxes()
+    local list = {}
+    for part in pairs(hitboxBackup) do list[#list + 1] = part end
+    for _, part in ipairs(list) do restorePart(part) end
+end
+
+connect(RS.Heartbeat, function()
+    -- чистим записи о частях, которых уже нет (респавн игрока)
+    for part in pairs(hitboxBackup) do
+        if not part.Parent then hitboxBackup[part] = nil end
+    end
+
+    if not state.expandHitbox then return end
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then
+            local c = p.Character
+            local hrp = c and c:FindFirstChild("HumanoidRootPart")
+            local head = c and c:FindFirstChild("Head")
+            local hum = c and c:FindFirstChildOfClass("Humanoid")
+            local sameTeam = state.team and p.Team ~= nil and p.Team == LP.Team
+            local valid = hrp and hum and hum.Health > 0 and not sameTeam
+
+            if valid then
+                pcall(expandPart, hrp, state.hitboxSize)
+                if head then
+                    if state.hitboxHead then
+                        pcall(expandPart, head, state.hitboxSize)
+                    else
+                        restorePart(head)
+                    end
+                end
+            else
+                if hrp then restorePart(hrp) end
+                if head then restorePart(head) end
+            end
+        end
+    end
+end)
 
 ---------------------------------------------------------------------
 -- ГЛАВНЫЙ ЦИКЛ (RENDER STEPPED / HEARTBEAT)
@@ -431,18 +493,6 @@ connect(RS.RenderStepped, function()
                 else
                     line.Visible = false
                 end
-            end
-        end
-    end
-
-    -- Hitbox Expander логика
-    if state.expandHitbox then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LP and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = p.Character.HumanoidRootPart
-                hrp.Size = Vector3.new(state.hitboxSize, state.hitboxSize, state.hitboxSize)
-                hrp.Transparency = 0.7
-                hrp.CanCollide = false
             end
         end
     end
@@ -824,6 +874,7 @@ section(tabCombat, "Модификация хитбоксов")
 toggle(tabCombat, "Hitbox Expander", "Увеличить размер хитбоксов врагов", "expandHitbox", function(on)
     if not on then resetHitboxes() end
 end)
+toggle(tabCombat, "Хитбокс головы", "Расширять и голову (если игра бьёт по голове)", "hitboxHead")
 slider(tabCombat, "Размер хитбокса", "hitboxSize", 2, 20, " studs")
 
 -- Движение
