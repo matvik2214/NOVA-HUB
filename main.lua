@@ -1,8 +1,8 @@
 --[[
-    NOVA HUB v3.0  |  Xeno-compatible
-    Ключ • ESP • Aimbot (своя кнопка) • Хитбоксы • Fly • Noclip • Invisible • Speed • Jump • FOV
+    NOVA HUB v4.0  |  Xeno-compatible
+    Ключ • ESP • Aimbot • Хитбоксы • Fly • Noclip • Невидимость • Speed • Jump • FOV
 
-    Ключ по умолчанию: NOVA-2026   (меняется в CONFIG.KEYS ниже)
+    Ключ: NOVA-4X7K-9QM2   (меняется в CONFIG.KEYS ниже)
     Меню: RightShift (кнопку можно поменять в разделе «Прочее»)
     Аимбот: ПКМ по умолчанию (кнопку можно выбрать в разделе «Бой»)
 ]]
@@ -19,10 +19,10 @@ local Camera = workspace.CurrentCamera
 -- НАСТРОЙКИ (меняй тут)
 ---------------------------------------------------------------------
 local CONFIG = {
-    VERSION   = "v3.0",
-    KEYS      = { "NOVA-2026", "NOVA-VIP" },          -- допустимые ключи
+    VERSION   = "v4.0",
+    KEYS      = { "NOVA-4X7K-9QM2" },                 -- допустимые ключи
     KEY_LINK  = "https://discord.gg/jJ6tx9hgGH",      -- где получить ключ
-    SAVE_FILE = "nova_hub_key.txt",                   -- запоминание ключа
+    SAVE_FILE = "nova_hub_key_v4.txt",                -- запоминание ключа
 }
 
 local env = (getgenv and getgenv()) or _G
@@ -43,14 +43,18 @@ local state = {
     esp = false, aim = false, team = false, hitbox = false,
     noclip = false, fly = false, inv = false, ijump = false,
     speedOn = false, jumpOn = false, fovOn = false,
+    wallCheck = false, sticky = true, showFov = true,
 
-    flySpeed = 60, fov = 150, smooth = 25,
+    flySpeed = 60, fov = 150, aimSpeed = 40, predict = 40,
     walkSpeed = 50, jumpPower = 100, camFov = 90,
-    hbSize = 10, hbTrans = 70,
+    hbSize = 10, hbTrans = 75, ghostSpeed = 60,
 
     hbPart = "HumanoidRootPart",
+    hbMode = "follow",
     aimPart = "Head",
-    aimKey = Enum.UserInputType.MouseButton2,   -- по умолчанию правая кнопка мыши
+    aimMode = "cursor",
+    invMode = "ghost",
+    aimKey = Enum.UserInputType.MouseButton2,
     menuKey = Enum.KeyCode.RightShift,
 }
 
@@ -61,9 +65,9 @@ local function connect(signal, fn)
     return c
 end
 
-local ready = false      -- меню готово (после ключа и загрузки)
-local setters = {}       -- функции для программного переключения тумблеров
-local hintLabels = {}    -- подписи с названиями клавиш
+local ready = false
+local setters = {}
+local hintLabels = {}
 
 ---------------------------------------------------------------------
 -- Тема и помощники
@@ -76,8 +80,6 @@ local ACCENT2 = Color3.fromRGB(60, 200, 255)
 local TEXT    = Color3.fromRGB(235, 235, 250)
 local DIM     = Color3.fromRGB(150, 150, 180)
 local OFF     = Color3.fromRGB(55, 55, 78)
-local GREEN   = Color3.fromRGB(80, 220, 140)
-local RED     = Color3.fromRGB(255, 90, 110)
 
 local function make(class, props, parent)
     local o = Instance.new(class)
@@ -88,8 +90,10 @@ end
 local function corner(parent, r)
     return make("UICorner", { CornerRadius = UDim.new(0, r or 8) }, parent)
 end
-local function gradient(parent, rot)
-    return make("UIGradient", { Color = ColorSequence.new(ACCENT, ACCENT2), Rotation = rot or 0 }, parent)
+local function gradient(parent, rot, c1, c2)
+    return make("UIGradient", {
+        Color = ColorSequence.new(c1 or ACCENT, c2 or ACCENT2), Rotation = rot or 0,
+    }, parent)
 end
 
 local function keyName(k)
@@ -108,7 +112,7 @@ local function updateHints()
     end
     if hintLabels.mini then hintLabels.mini.Text = m .. " — открыть меню" end
     if hintLabels.help then
-        hintLabels.help.Text = "  " .. m .. " — открыть / закрыть меню\n  " .. a .. " (держать) — аимбот\n  WASD — полёт, Space — вверх, LeftCtrl — вниз\n  Ползунки: тяни мышкой или жми  –  +\n  Шапку меню можно перетаскивать"
+        hintLabels.help.Text = "  " .. m .. " — открыть / закрыть меню\n  " .. a .. " (держать) — аимбот\n  WASD — полёт, Space — вверх, LeftCtrl — вниз\n  Призрак: WASD, Space / Ctrl, Shift — быстрее, ПКМ — осмотр\n  Ползунки: тяни мышкой или жми  –  +"
     end
 end
 
@@ -120,7 +124,7 @@ pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
 gui.Parent = getGuiParent()
 
 ---------------------------------------------------------------------
--- Утилиты интерфейса: уведомления, затухание, фон
+-- Утилиты интерфейса
 ---------------------------------------------------------------------
 local function fadeOut(root, t)
     local info = TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad)
@@ -172,25 +176,37 @@ local function notify(text)
     end)
 end
 
-local function orb(parent, x, y, size, color)
+-- soft = true: очень тусклый фон (для окна ключа)
+local function orb(parent, x, y, size, color, soft)
+    local from = soft and 0.95 or 0.88
+    local to = soft and 0.975 or 0.93
     local o = make("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(x, y),
         Size = UDim2.fromOffset(size, size), BackgroundColor3 = color,
-        BackgroundTransparency = 0.88, BorderSizePixel = 0,
+        BackgroundTransparency = from, BorderSizePixel = 0,
     }, parent)
     corner(o, 999)
     TS:Create(o, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {
-        Size = UDim2.fromOffset(size * 1.25, size * 1.25), BackgroundTransparency = 0.93,
+        Size = UDim2.fromOffset(size * 1.2, size * 1.2), BackgroundTransparency = to,
     }):Play()
 end
 
-local function backdrop(parent)
-    make("UIGradient", {
-        Color = ColorSequence.new(Color3.fromRGB(10, 8, 24), Color3.fromRGB(4, 14, 28)),
-        Rotation = 45,
-    }, parent)
-    orb(parent, 0.2, 0.25, 320, ACCENT)
-    orb(parent, 0.8, 0.75, 380, ACCENT2)
+local function backdrop(parent, soft)
+    if soft then
+        make("UIGradient", {
+            Color = ColorSequence.new(Color3.fromRGB(11, 10, 17), Color3.fromRGB(7, 10, 16)),
+            Rotation = 45,
+        }, parent)
+        orb(parent, 0.2, 0.25, 300, Color3.fromRGB(80, 62, 140), true)
+        orb(parent, 0.8, 0.75, 340, Color3.fromRGB(45, 95, 120), true)
+    else
+        make("UIGradient", {
+            Color = ColorSequence.new(Color3.fromRGB(10, 8, 24), Color3.fromRGB(4, 14, 28)),
+            Rotation = 45,
+        }, parent)
+        orb(parent, 0.2, 0.25, 320, ACCENT)
+        orb(parent, 0.8, 0.75, 380, ACCENT2)
+    end
 end
 
 ---------------------------------------------------------------------
@@ -249,11 +265,15 @@ connect(Players.PlayerAdded, hookPlayer)
 connect(Players.PlayerRemoving, removeESP)
 
 ---------------------------------------------------------------------
--- ХИТБОКСЫ (расширение выбранной части тела у других игроков)
--- Часть остаётся прикреплённой к персонажу, поэтому «ходит» за игроком.
--- Оригинальные свойства запоминаются и возвращаются при выключении.
+-- ХИТБОКСЫ
+-- Режим «Следует за игроком»: настоящая часть тела не трогается, к персонажу
+-- добавляется большая коробка, которая каждый кадр повторяет её положение —
+-- поэтому она всегда двигается вместе с человеком.
+-- Режим «Реальная часть»: увеличивается сама часть (без Massless, чтобы
+-- не ломалась физика), всё возвращается при выключении.
 ---------------------------------------------------------------------
 local hbOriginal = {}
+local hbProxies = {}
 
 local function restorePart(part)
     local o = hbOriginal[part]
@@ -263,7 +283,6 @@ local function restorePart(part)
             part.Size = o.Size
             part.Transparency = o.Transparency
             part.CanCollide = o.CanCollide
-            part.Massless = o.Massless
             part.Material = o.Material
             part.Color = o.Color
         end)
@@ -276,14 +295,49 @@ local function restoreAllHitboxes()
     for _, part in ipairs(list) do restorePart(part) end
 end
 
+local function removeProxy(p)
+    local o = hbProxies[p]
+    if o then
+        hbProxies[p] = nil
+        pcall(function() o.proxy:Destroy() end)
+    end
+end
+
+local function clearProxies()
+    local list = {}
+    for p in pairs(hbProxies) do table.insert(list, p) end
+    for _, p in ipairs(list) do removeProxy(p) end
+end
+
+local function clearHitboxes()
+    clearProxies()
+    restoreAllHitboxes()
+end
+
+local function syncProxies()
+    for _, o in pairs(hbProxies) do
+        if o.src and o.src.Parent and o.proxy.Parent then
+            o.proxy.CFrame = o.src.CFrame
+        end
+    end
+end
+
 local function updateHitboxes()
     if not state.hitbox then
-        if next(hbOriginal) then restoreAllHitboxes() end
+        if next(hbProxies) or next(hbOriginal) then clearHitboxes() end
         return
     end
 
     local s = state.hbSize
     local size = Vector3.new(s, s, s)
+    local follow = state.hbMode == "follow"
+
+    if follow then
+        if next(hbOriginal) then restoreAllHitboxes() end
+    else
+        if next(hbProxies) then clearProxies() end
+    end
+
     local touched = {}
 
     for _, p in ipairs(Players:GetPlayers()) do
@@ -292,35 +346,65 @@ local function updateHitboxes()
             local hum = c and c:FindFirstChildOfClass("Humanoid")
             local part = c and c:FindFirstChild(state.hbPart)
             local sameTeam = state.team and p.Team ~= nil and p.Team == LP.Team
-            if part and part:IsA("BasePart") and hum and hum.Health > 0 and not sameTeam then
+            local valid = part and part:IsA("BasePart") and hum and hum.Health > 0 and not sameTeam
+
+            if follow then
+                if valid then
+                    local o = hbProxies[p]
+                    if not o or o.src ~= part or not o.proxy.Parent or o.proxy.Parent ~= c then
+                        removeProxy(p)
+                        local proxy = make("Part", {
+                            Name = "NovaHitbox", Anchored = true, CanCollide = false,
+                            CanTouch = false, CanQuery = true, CastShadow = false,
+                            Material = Enum.Material.Neon, Color = ACCENT,
+                            TopSurface = Enum.SurfaceType.Smooth,
+                            BottomSurface = Enum.SurfaceType.Smooth,
+                            Size = size, CFrame = part.CFrame,
+                        }, c)
+                        o = { proxy = proxy, src = part }
+                        hbProxies[p] = o
+                    end
+                    o.proxy.Size = size
+                    o.proxy.Transparency = state.hbTrans / 100
+                    o.proxy.CFrame = part.CFrame
+                else
+                    removeProxy(p)
+                end
+            elseif valid then
                 if not hbOriginal[part] then
                     hbOriginal[part] = {
                         Size = part.Size, Transparency = part.Transparency,
-                        CanCollide = part.CanCollide, Massless = part.Massless,
-                        Material = part.Material, Color = part.Color,
+                        CanCollide = part.CanCollide, Material = part.Material,
+                        Color = part.Color,
                     }
                 end
                 touched[part] = true
                 part.Size = size
                 part.Transparency = state.hbTrans / 100
                 part.CanCollide = false
-                part.Massless = true
                 part.Material = Enum.Material.Neon
                 part.Color = ACCENT
             end
         end
     end
 
-    -- вернуть всё, что больше не подходит (умер, вышел, сменил команду, респавн)
-    local stale = {}
-    for part in pairs(hbOriginal) do
-        if not touched[part] then table.insert(stale, part) end
+    if follow then
+        local gone = {}
+        for p in pairs(hbProxies) do
+            if not p.Parent then table.insert(gone, p) end
+        end
+        for _, p in ipairs(gone) do removeProxy(p) end
+    else
+        local stale = {}
+        for part in pairs(hbOriginal) do
+            if not touched[part] then table.insert(stale, part) end
+        end
+        for _, part in ipairs(stale) do restorePart(part) end
     end
-    for _, part in ipairs(stale) do restorePart(part) end
 end
 
 ---------------------------------------------------------------------
--- Fly / Noclip / Jump / Invisible
+-- Fly / Noclip / Jump
 ---------------------------------------------------------------------
 local flyBV, flyBG
 
@@ -330,68 +414,6 @@ local function stopFly()
     local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
     if hum then hum.PlatformStand = false end
 end
-
--- Невидимость: персонаж телепортируется в далёкую точку, там сажается на
--- невидимое сиденье и возвращается обратно. Свой вид НЕ меняется.
-local INVIS_SPOT = CFrame.new(-25.95, 84, 3537.55)
-local invSeat, invWeld
-local invBusy = false
-
-local function cleanupInvis()
-    if invWeld then invWeld:Destroy() invWeld = nil end
-    if invSeat then invSeat:Destroy() invSeat = nil end
-end
-
-local function setInvisible(on)
-    if invBusy then
-        setters.inv(not on, true)
-        return
-    end
-    local char = LP.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local torso = char and (char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso"))
-
-    if on then
-        if not (root and torso) then
-            setters.inv(false, true)
-            notify("Нет персонажа — подожди респавна")
-            return
-        end
-        invBusy = true
-        local ok = pcall(function()
-            local saved = root.CFrame
-            root.CFrame = INVIS_SPOT
-            task.wait(0.15)
-            invSeat = make("Seat", {
-                Name = "NovaSeat", Anchored = false, CanCollide = false,
-                Transparency = 1, Position = INVIS_SPOT.Position,
-            }, workspace)
-            invWeld = make("Weld", { Part0 = invSeat, Part1 = torso }, invSeat)
-            task.wait()
-            invSeat.CFrame = saved
-        end)
-        invBusy = false
-        if ok then
-            notify("Невидимость включена")
-        else
-            cleanupInvis()
-            setters.inv(false, true)
-            notify("Невидимость не сработала")
-        end
-    else
-        cleanupInvis()
-        notify("Невидимость выключена")
-    end
-end
-
-connect(LP.CharacterAdded, function()
-    -- после респавна старые объекты исчезли, сбрасываем состояние
-    if state.inv then
-        cleanupInvis()
-        setters.inv(false, true)
-    end
-    flyBV, flyBG = nil, nil
-end)
 
 connect(UIS.JumpRequest, function()
     if state.ijump then
@@ -409,13 +431,215 @@ connect(RS.Stepped, function()
 end)
 
 ---------------------------------------------------------------------
--- Аимбот (кнопка выбирается в меню)
+-- НЕВИДИМОСТЬ
+-- «Призрак»: настоящее тело улетает высоко в небо и стоит там на
+-- невидимой площадке — другие игроки тебя на карте не видят вообще.
+-- Ты летаешь свободной камерой (WASD, Space / Ctrl, Shift, ПКМ — осмотр).
+-- При выключении появляешься на земле там, где была камера.
+-- «Сиденье»: старый способ (может не работать в части игр).
+---------------------------------------------------------------------
+local ghost = nil
+local HIDE_HEIGHT = 20000
+
+local function ghostOn()
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not (root and hum) then return false end
+
+    local cam = workspace.CurrentCamera
+    local look = cam.CFrame.LookVector
+    local g = {
+        savedCF = root.CFrame,
+        ws = hum.WalkSpeed, ujp = hum.UseJumpPower, jp = hum.JumpPower, jh = hum.JumpHeight,
+        pos = cam.CFrame.Position,
+        yaw = math.atan2(-look.X, -look.Z),
+        pitch = math.asin(math.clamp(look.Y, -1, 1)),
+    }
+
+    local hideCF = CFrame.new(root.Position + Vector3.new(0, HIDE_HEIGHT, 0))
+    g.platform = make("Part", {
+        Name = "NovaGhostPlatform", Anchored = true, CanCollide = true,
+        Transparency = 1, Size = Vector3.new(60, 2, 60),
+        Position = hideCF.Position - Vector3.new(0, 4, 0),
+    }, workspace)
+
+    root.CFrame = hideCF
+    root.AssemblyLinearVelocity = Vector3.zero
+    hum.WalkSpeed = 0
+    hum.UseJumpPower = true
+    hum.JumpPower = 0
+
+    ghost = g
+    return true
+end
+
+local function ghostOff()
+    local g = ghost
+    if not g then return end
+    ghost = nil
+
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+    local target = g.savedCF
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local ignore = { g.platform }
+    if char then table.insert(ignore, char) end
+    params.FilterDescendantsInstances = ignore
+    local hit = workspace:Raycast(g.pos, Vector3.new(0, -2000, 0), params)
+    if hit then target = CFrame.new(hit.Position + Vector3.new(0, 4, 0)) end
+
+    if root then
+        root.CFrame = target
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
+    if hum then
+        hum.WalkSpeed = g.ws
+        hum.UseJumpPower = g.ujp
+        hum.JumpPower = g.jp
+        pcall(function() hum.JumpHeight = g.jh end)
+    end
+    pcall(function() g.platform:Destroy() end)
+
+    local cam = workspace.CurrentCamera
+    cam.CameraType = Enum.CameraType.Custom
+    if hum then cam.CameraSubject = hum end
+    UIS.MouseBehavior = Enum.MouseBehavior.Default
+end
+
+local function updateGhost(dt)
+    local g = ghost
+    if not g then return end
+    local cam = workspace.CurrentCamera
+    cam.CameraType = Enum.CameraType.Scriptable
+
+    if UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        UIS.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+        local d = UIS:GetMouseDelta()
+        g.yaw = g.yaw - d.X * 0.004
+        g.pitch = math.clamp(g.pitch - d.Y * 0.004, -1.5, 1.5)
+    elseif UIS.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then
+        UIS.MouseBehavior = Enum.MouseBehavior.Default
+    end
+
+    local rot = CFrame.fromOrientation(g.pitch, g.yaw, 0)
+
+    if not UIS:GetFocusedTextBox() then
+        local dir = Vector3.zero
+        if UIS:IsKeyDown(Enum.KeyCode.W) then dir += rot.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.S) then dir -= rot.LookVector end
+        if UIS:IsKeyDown(Enum.KeyCode.D) then dir += rot.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.A) then dir -= rot.RightVector end
+        if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.yAxis end
+        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.yAxis end
+        if dir.Magnitude > 0 then
+            local speed = state.ghostSpeed * (UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 3 or 1)
+            g.pos += dir.Unit * speed * dt
+        end
+    end
+
+    cam.CFrame = CFrame.new(g.pos) * rot
+end
+
+-- старый способ: сиденье
+local INVIS_SPOT = CFrame.new(-25.95, 84, 3537.55)
+local invSeat, invWeld
+local invBusy = false
+
+local function cleanupInvis()
+    if invWeld then invWeld:Destroy() invWeld = nil end
+    if invSeat then invSeat:Destroy() invSeat = nil end
+end
+
+local function setInvisible(on)
+    if invBusy then
+        setters.inv(not on, true)
+        return
+    end
+
+    if on then
+        if state.invMode == "ghost" then
+            local ok, res = pcall(ghostOn)
+            if ok and res then
+                notify("Ты исчез: летай камерой")
+            else
+                setters.inv(false, true)
+                notify("Нет персонажа — подожди респавна")
+            end
+        else
+            local char = LP.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local torso = char and (char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso"))
+            if not (root and torso) then
+                setters.inv(false, true)
+                notify("Нет персонажа — подожди респавна")
+                return
+            end
+            invBusy = true
+            local ok = pcall(function()
+                local saved = root.CFrame
+                root.CFrame = INVIS_SPOT
+                task.wait(0.15)
+                invSeat = make("Seat", {
+                    Name = "NovaSeat", Anchored = false, CanCollide = false,
+                    Transparency = 1, Position = INVIS_SPOT.Position,
+                }, workspace)
+                invWeld = make("Weld", { Part0 = invSeat, Part1 = torso }, invSeat)
+                task.wait()
+                invSeat.CFrame = saved
+            end)
+            invBusy = false
+            if ok then
+                notify("Невидимость включена")
+            else
+                cleanupInvis()
+                setters.inv(false, true)
+                notify("Невидимость не сработала")
+            end
+        end
+    else
+        pcall(ghostOff)
+        cleanupInvis()
+        notify("Ты снова виден")
+    end
+end
+
+connect(LP.CharacterAdded, function()
+    -- после респавна всё старое исчезло: просто сбрасываем состояние
+    if state.inv then
+        local g = ghost
+        ghost = nil
+        if g then pcall(function() g.platform:Destroy() end) end
+        pcall(function()
+            workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+            UIS.MouseBehavior = Enum.MouseBehavior.Default
+        end)
+        cleanupInvis()
+        setters.inv(false, true)
+    end
+    flyBV, flyBG = nil, nil
+end)
+
+---------------------------------------------------------------------
+-- АИМБОТ
+-- • плавное наведение, не зависящее от FPS
+-- • предсказание движения цели
+-- • проверка стен (Wall Check)
+-- • захват цели, пока держишь кнопку (Sticky)
+-- • приоритет: ближе к курсору или ближе к тебе
 ---------------------------------------------------------------------
 local fovCircle = make("Frame", {
     AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Visible = false,
 }, gui)
 corner(fovCircle, 999)
-make("UIStroke", { Color = ACCENT2, Thickness = 1.5, Transparency = 0.2 }, fovCircle)
+make("UIStroke", { Color = ACCENT2, Thickness = 1.5, Transparency = 0.35 }, fovCircle)
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+pcall(function() rayParams.RespectCanCollide = true end)
 
 local function isAimHeld()
     local k = state.aimKey
@@ -426,23 +650,54 @@ local function isAimHeld()
     return UIS:IsKeyDown(k)
 end
 
+local function visibleFrom(origin, part)
+    local ignore = {}
+    if LP.Character then table.insert(ignore, LP.Character) end
+    if part.Parent then table.insert(ignore, part.Parent) end
+    rayParams.FilterDescendantsInstances = ignore
+    return workspace:Raycast(origin, part.Position - origin, rayParams) == nil
+end
+
+-- возвращает часть тела цели и «очки» (меньше = лучше)
+local function candidate(p, fovMul)
+    if p == LP then return nil end
+    local c = p.Character
+    if not c then return nil end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    local part = c:FindFirstChild(state.aimPart) or c:FindFirstChild("Head")
+    if not (hum and part and hum.Health > 0) then return nil end
+    if state.team and p.Team ~= nil and p.Team == LP.Team then return nil end
+
+    local pos, vis = Camera:WorldToViewportPoint(part.Position)
+    if not vis then return nil end
+    local cursorDist = (Vector2.new(pos.X, pos.Y) - UIS:GetMouseLocation()).Magnitude
+    if cursorDist > state.fov * (fovMul or 1) then return nil end
+    if state.wallCheck and not visibleFrom(Camera.CFrame.Position, part) then return nil end
+
+    local score = cursorDist
+    if state.aimMode == "distance" then
+        score = (part.Position - Camera.CFrame.Position).Magnitude
+    end
+    return part, score
+end
+
+local aimLockPlayer = nil
+
 local function getTarget()
-    local best, bestDist = nil, state.fov
-    local mouse = UIS:GetMouseLocation()
+    if state.sticky and aimLockPlayer and aimLockPlayer.Parent then
+        local part = candidate(aimLockPlayer, 1.8)
+        if part then return part end
+    end
+    aimLockPlayer = nil
+
+    local best, bestScore, bestPlayer
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character then
-            local part = p.Character:FindFirstChild(state.aimPart) or p.Character:FindFirstChild("Head")
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            local sameTeam = state.team and p.Team ~= nil and p.Team == LP.Team
-            if part and hum and hum.Health > 0 and not sameTeam then
-                local pos, vis = Camera:WorldToViewportPoint(part.Position)
-                if vis then
-                    local d = (Vector2.new(pos.X, pos.Y) - mouse).Magnitude
-                    if d < bestDist then best, bestDist = part, d end
-                end
-            end
+        local part, score = candidate(p, 1)
+        if part and (not bestScore or score < bestScore) then
+            best, bestScore, bestPlayer = part, score, p
         end
     end
+    aimLockPlayer = bestPlayer
     return best
 end
 
@@ -451,16 +706,22 @@ end
 ---------------------------------------------------------------------
 connect(RS.Heartbeat, function()
     pcall(updateHitboxes)
+    syncProxies()
 end)
 
-connect(RS.RenderStepped, function()
+connect(RS.RenderStepped, function(dt)
     Camera = workspace.CurrentCamera
+    syncProxies()
+
     local char = LP.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
 
+    -- Призрак
+    if ghost then updateGhost(dt) end
+
     -- ESP: дистанция
-    if state.esp and root then
+    if state.esp and root and not ghost then
         for p, o in pairs(espObjs) do
             local r = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
             if r and o.lbl then
@@ -470,7 +731,7 @@ connect(RS.RenderStepped, function()
     end
 
     -- Скорость / прыжок / FOV камеры
-    if hum then
+    if hum and not ghost then
         if state.speedOn then hum.WalkSpeed = state.walkSpeed end
         if state.jumpOn then
             hum.UseJumpPower = true
@@ -480,22 +741,32 @@ connect(RS.RenderStepped, function()
     if state.fovOn then Camera.FieldOfView = state.camFov end
 
     -- Аимбот
-    fovCircle.Visible = state.aim
-    if state.aim then
+    local aiming = state.aim and not ghost
+    fovCircle.Visible = aiming and state.showFov
+    if aiming then
         local m = UIS:GetMouseLocation()
         fovCircle.Position = UDim2.fromOffset(m.X, m.Y)
         fovCircle.Size = UDim2.fromOffset(state.fov * 2, state.fov * 2)
+
         if isAimHeld() then
             local t = getTarget()
             if t then
-                local goal = CFrame.new(Camera.CFrame.Position, t.Position)
-                Camera.CFrame = Camera.CFrame:Lerp(goal, math.clamp(state.smooth / 100, 0.02, 1))
+                local vel = Vector3.zero
+                local tr = t.Parent and t.Parent:FindFirstChild("HumanoidRootPart")
+                if tr then vel = tr.AssemblyLinearVelocity end
+                local aimPos = t.Position + vel * (state.predict / 1000)
+                local goal = CFrame.lookAt(Camera.CFrame.Position, aimPos)
+                local k = 2 + state.aimSpeed * 0.3
+                local alpha = 1 - math.exp(-k * dt)
+                Camera.CFrame = Camera.CFrame:Lerp(goal, math.clamp(alpha, 0, 1))
             end
+        else
+            aimLockPlayer = nil
         end
     end
 
     -- Полёт
-    if state.fly and root and hum then
+    if state.fly and root and hum and not ghost then
         if not flyBV or flyBV.Parent ~= root then
             if flyBV then flyBV:Destroy() end
             if flyBG then flyBG:Destroy() end
@@ -532,7 +803,6 @@ local menuStroke = make("UIStroke", { Thickness = 2, Color = Color3.new(1, 1, 1)
 gradient(menuStroke, 45)
 local menuScale = make("UIScale", { Scale = 0 }, menu)
 
--- Шапка
 local header = make("Frame", {
     Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = PANEL, BorderSizePixel = 0,
 }, menu)
@@ -586,7 +856,6 @@ local closeBtn = make("TextButton", {
 }, header)
 corner(closeBtn, 9)
 
--- Перетаскивание
 do
     local dragging, dragStart, startPos
     connect(header.InputBegan, function(i)
@@ -607,7 +876,6 @@ do
     end)
 end
 
--- Нижняя панель
 local footer = make("Frame", {
     Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 1, -30),
     BackgroundColor3 = PANEL, BorderSizePixel = 0,
@@ -618,7 +886,6 @@ hintLabels.footer = make("TextLabel", {
     TextColor3 = DIM, Text = "",
 }, footer)
 
--- Боковая панель и контент
 local sidebar = make("Frame", {
     Size = UDim2.fromOffset(150, MENU_H - 108), Position = UDim2.fromOffset(10, 68),
     BackgroundTransparency = 1,
@@ -740,6 +1007,7 @@ local function toggle(page, name, desc, key, onChange)
         if onChange and not silent then task.spawn(onChange, on) end
     end
     setters[key] = apply
+    apply(state[key], true)
     row.MouseButton1Click:Connect(function() apply(not state[key]) end)
 end
 
@@ -833,10 +1101,9 @@ local function sideButton(row, text, width)
     return b
 end
 
--- Выбор из списка (нажимаешь — переключается на следующий вариант)
 local function cycle(page, name, desc, key, options, onChange)
     local row = rowBase(page, name, desc)
-    local btn = sideButton(row, "?", 130)
+    local btn = sideButton(row, "?", 150)
     local function labelFor(v)
         for _, o in ipairs(options) do if o[1] == v then return o[2] end end
         return "?"
@@ -852,11 +1119,10 @@ local function cycle(page, name, desc, key, options, onChange)
     end)
 end
 
--- Выбор кнопки: нажми на кнопку в меню, потом нажми нужную клавишу
 local listening = nil
 local function bind(page, name, desc, key, allowMouse)
     local row = rowBase(page, name, desc)
-    local btn = sideButton(row, keyName(state[key]), 130)
+    local btn = sideButton(row, keyName(state[key]), 150)
     btn.MouseButton1Click:Connect(function()
         if listening then listening.cancel() end
         btn.Text = "нажми кнопку..."
@@ -898,17 +1164,27 @@ bind(tabCombat, "Кнопка аима", "По умолчанию — права
 cycle(tabCombat, "Цель аима", "Куда наводиться", "aimPart", {
     { "Head", "Голова" }, { "HumanoidRootPart", "Торс" },
 })
+cycle(tabCombat, "Приоритет цели", "Кого брать первым", "aimMode", {
+    { "cursor", "Ближе к курсору" }, { "distance", "Ближе ко мне" },
+})
+toggle(tabCombat, "Wall Check", "Не целиться сквозь стены", "wallCheck")
+toggle(tabCombat, "Захват цели", "Держится за цель, пока зажата кнопка", "sticky")
 toggle(tabCombat, "Team Check", "Не целиться и не трогать свою команду", "team")
+toggle(tabCombat, "Круг FOV", "Показывать круг области аима", "showFov")
 slider(tabCombat, "Радиус FOV аима", "fov", 50, 500, "")
-slider(tabCombat, "Плавность наведения", "smooth", 5, 100, "%")
+slider(tabCombat, "Скорость наведения", "aimSpeed", 5, 100, "%")
+slider(tabCombat, "Предсказание", "predict", 0, 300, " мс")
 
 section(tabCombat, "Хитбоксы")
-toggle(tabCombat, "Hitbox", "Увеличивает часть тела у других игроков", "hitbox", function(on)
-    if not on then restoreAllHitboxes() end
+toggle(tabCombat, "Hitbox", "Большая коробка вокруг игроков", "hitbox", function(on)
+    if not on then clearHitboxes() end
 end)
-cycle(tabCombat, "Часть тела", "Что увеличивать", "hbPart", {
+cycle(tabCombat, "Режим", "Как работает хитбокс", "hbMode", {
+    { "follow", "Следует за игроком" }, { "real", "Реальная часть" },
+}, function() clearHitboxes() end)
+cycle(tabCombat, "Часть тела", "Вокруг чего коробка", "hbPart", {
     { "HumanoidRootPart", "Торс" }, { "Head", "Голова" },
-}, function() restoreAllHitboxes() end)
+}, function() clearHitboxes() end)
 slider(tabCombat, "Размер хитбокса", "hbSize", 2, 50, "")
 slider(tabCombat, "Прозрачность", "hbTrans", 0, 100, "%")
 
@@ -940,15 +1216,21 @@ toggle(tabMove, "Noclip", "Проход сквозь стены", "noclip")
 toggle(tabMove, "Infinite Jump", "Бесконечный прыжок", "ijump")
 
 -- Прочее
-section(tabMisc, "Скрытность")
-toggle(tabMisc, "Invisible", "Тебя телепортирует так, что другие не видят; свой вид не меняется", "inv", setInvisible)
+section(tabMisc, "Невидимость")
+toggle(tabMisc, "Invisible", "Тело прячется, другие тебя не видят", "inv", setInvisible)
+cycle(tabMisc, "Режим", "Призрак — камера, Сиденье — старый способ", "invMode", {
+    { "ghost", "Призрак (камера)" }, { "seat", "Сиденье" },
+}, function()
+    if state.inv then setters.inv(false) end
+end)
+slider(tabMisc, "Скорость призрака", "ghostSpeed", 10, 300, "")
 
 section(tabMisc, "Кнопки")
 bind(tabMisc, "Кнопка меню", "Открыть / закрыть меню", "menuKey", false)
 
 section(tabMisc, "Управление")
 local help = make("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 110), BackgroundColor3 = ROW,
+    Size = UDim2.new(1, 0, 0, 120), BackgroundColor3 = ROW,
     Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = TEXT,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, LayoutOrder = nextOrder(tabMisc), Text = "",
@@ -963,7 +1245,7 @@ local news = make("TextLabel", {
     Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = TEXT,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, LayoutOrder = nextOrder(tabMisc),
-    Text = "  • Новое окно ввода ключа\n  • Аимбот: выбор любой кнопки (по умолчанию ПКМ)\n  • Хитбоксы: размер, прозрачность, часть тела\n  • Хитбоксы возвращаются в норму при выключении\n  • Невидимость не меняет твой вид\n  • Кнопка меню настраивается\n  • Уведомления и обновлённый дизайн",
+    Text = "  • Хитбоксы двигаются вместе с игроком\n  • Аим: плавность, предсказание, Wall Check, захват цели\n  • Невидимость: тело прячется, ты летаешь камерой\n  • Новый ключ и спокойное окно ввода ключа\n  • Круг FOV можно скрыть",
 }, tabMisc)
 corner(news, 10)
 make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 6) }, news)
@@ -1014,7 +1296,6 @@ end
 closeBtn.MouseButton1Click:Connect(function() showMenu(false) end)
 
 connect(UIS.InputBegan, function(i, gp)
-    -- режим выбора кнопки
     if listening then
         if os.clock() - listening.t < 0.25 then return end
         local newKey
@@ -1052,7 +1333,8 @@ local function unload()
     state.fly, state.noclip, state.aim, state.esp, state.ijump = false, false, false, false, false
     state.speedOn, state.jumpOn, state.fovOn, state.hitbox = false, false, false, false
     stopFly()
-    pcall(restoreAllHitboxes)
+    pcall(clearHitboxes)
+    pcall(ghostOff)
     pcall(function()
         local h = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
         if h then h.WalkSpeed = 16 h.JumpPower = 50 end
@@ -1077,7 +1359,7 @@ local function startLoading()
         Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(8, 8, 16),
         BorderSizePixel = 0, ZIndex = 50,
     }, gui)
-    backdrop(splash)
+    backdrop(splash, false)
 
     local logo = make("TextLabel", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.40),
@@ -1138,7 +1420,7 @@ local function startLoading()
             { "Загрузка модулей...", 0.30 },
             { "Подготовка ESP и аимбота...", 0.50 },
             { "Настройка хитбоксов...", 0.68 },
-            { "Настройка движения...", 0.84 },
+            { "Настройка невидимости...", 0.84 },
             { "Сборка меню...", 0.95 },
             { "Готово!", 1 },
         }
@@ -1160,7 +1442,7 @@ local function startLoading()
 end
 
 ---------------------------------------------------------------------
--- ОКНО ВВОДА КЛЮЧА
+-- ОКНО ВВОДА КЛЮЧА (тусклое, без ярких цветов)
 ---------------------------------------------------------------------
 local function validKey(k)
     k = (tostring(k or ""):gsub("%s+", "")):upper()
@@ -1187,89 +1469,99 @@ local function saveKey(k)
 end
 
 local function showKeyScreen(onSuccess)
+    -- приглушённая палитра
+    local K_BG     = Color3.fromRGB(9, 9, 14)
+    local K_CARD   = Color3.fromRGB(17, 17, 26)
+    local K_LINE   = Color3.fromRGB(44, 44, 66)
+    local K_FIELD  = Color3.fromRGB(24, 24, 36)
+    local K_TEXT   = Color3.fromRGB(205, 205, 222)
+    local K_DIM    = Color3.fromRGB(115, 115, 142)
+    local K_ACCENT = Color3.fromRGB(88, 68, 160)
+    local K_OK     = Color3.fromRGB(105, 175, 140)
+    local K_BAD    = Color3.fromRGB(200, 100, 112)
+
     local scr = make("Frame", {
-        Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(8, 8, 16),
+        Size = UDim2.fromScale(1, 1), BackgroundColor3 = K_BG,
         BorderSizePixel = 0, ZIndex = 50,
     }, gui)
-    backdrop(scr)
+    backdrop(scr, true)
 
     local card = make("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(440, 380), BackgroundColor3 = PANEL, BorderSizePixel = 0,
+        Size = UDim2.fromOffset(420, 370), BackgroundColor3 = K_CARD, BorderSizePixel = 0,
     }, scr)
-    corner(card, 20)
-    local cardStroke = make("UIStroke", { Thickness = 2, Color = Color3.new(1, 1, 1) }, card)
-    gradient(cardStroke, 45)
-    local cardScale = make("UIScale", { Scale = 0 }, card)
-    TS:Create(cardScale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+    corner(card, 18)
+    make("UIStroke", { Thickness = 1, Color = K_LINE }, card)
+    local cardScale = make("UIScale", { Scale = 0.9 }, card)
+    TS:Create(cardScale, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 
     local logo = make("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 26),
-        Size = UDim2.fromOffset(380, 48), BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBlack, TextSize = 40, TextColor3 = Color3.new(1, 1, 1),
+        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 28),
+        Size = UDim2.fromOffset(360, 42), BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold, TextSize = 32, TextColor3 = Color3.new(1, 1, 1),
         Text = "NOVA HUB",
     }, card)
-    gradient(logo, 0)
+    gradient(logo, 0, Color3.fromRGB(165, 150, 225), Color3.fromRGB(135, 175, 205))
 
     local badge = make("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 78),
-        Size = UDim2.fromOffset(96, 22), BackgroundColor3 = ACCENT, BorderSizePixel = 0,
+        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 76),
+        Size = UDim2.fromOffset(84, 22), BackgroundColor3 = Color3.fromRGB(34, 30, 58),
+        BorderSizePixel = 0,
     }, card)
     corner(badge, 11)
-    gradient(badge, 0)
     make("TextLabel", {
         Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
-        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = Color3.fromRGB(160, 150, 205),
         Text = CONFIG.VERSION .. " UPDATE",
     }, badge)
 
     make("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 120),
-        Size = UDim2.fromOffset(380, 22), BackgroundTransparency = 1,
-        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = DIM,
+        AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 122),
+        Size = UDim2.fromOffset(340, 20), BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = K_DIM,
         Text = "Введите ключ доступа",
     }, card)
 
     local box = make("TextBox", {
         AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 150),
-        Size = UDim2.fromOffset(360, 48), BackgroundColor3 = ROW, BorderSizePixel = 0,
-        Font = Enum.Font.GothamSemibold, TextSize = 17, TextColor3 = TEXT,
-        PlaceholderText = "NOVA-XXXX", PlaceholderColor3 = Color3.fromRGB(110, 110, 140),
+        Size = UDim2.fromOffset(340, 46), BackgroundColor3 = K_FIELD, BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = K_TEXT,
+        PlaceholderText = "NOVA-XXXX-XXXX", PlaceholderColor3 = Color3.fromRGB(85, 85, 110),
         Text = "", ClearTextOnFocus = false,
     }, card)
     corner(box, 12)
-    local boxStroke = make("UIStroke", { Thickness = 1.5, Color = OFF }, box)
+    local boxStroke = make("UIStroke", { Thickness = 1, Color = K_LINE }, box)
 
     local verify = make("TextButton", {
         AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 212),
-        Size = UDim2.fromOffset(360, 48), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
-        Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+        Size = UDim2.fromOffset(340, 46), BackgroundColor3 = K_ACCENT, BorderSizePixel = 0,
+        Font = Enum.Font.GothamSemibold, TextSize = 15, TextColor3 = Color3.fromRGB(235, 235, 245),
         Text = "Проверить ключ", AutoButtonColor = true,
     }, card)
     corner(verify, 12)
-    gradient(verify, 0)
 
     local getKey = make("TextButton", {
         AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 270),
-        Size = UDim2.fromOffset(360, 40), BackgroundColor3 = ROW, BorderSizePixel = 0,
-        Font = Enum.Font.GothamSemibold, TextSize = 14, TextColor3 = TEXT,
+        Size = UDim2.fromOffset(340, 40), BackgroundColor3 = Color3.fromRGB(26, 26, 38),
+        BorderSizePixel = 0, Font = Enum.Font.Gotham, TextSize = 14,
+        TextColor3 = Color3.fromRGB(165, 165, 190),
         Text = "Получить ключ (Discord)", AutoButtonColor = true,
     }, card)
     corner(getKey, 12)
 
     local status = make("TextLabel", {
         AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 328),
-        Size = UDim2.fromOffset(380, 22), BackgroundTransparency = 1,
-        Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = DIM, Text = "",
+        Size = UDim2.fromOffset(360, 22), BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = K_DIM, Text = "",
     }, card)
 
     connect(box.Focused, function()
-        TS:Create(boxStroke, TweenInfo.new(0.2), { Color = ACCENT }):Play()
+        TS:Create(boxStroke, TweenInfo.new(0.2), { Color = K_ACCENT }):Play()
     end)
 
     local function shake()
         local base = card.Position
-        for _, dx in ipairs({ -12, 12, -8, 8, -4, 4, 0 }) do
+        for _, dx in ipairs({ -10, 10, -6, 6, -3, 3, 0 }) do
             TS:Create(card, TweenInfo.new(0.04), { Position = base + UDim2.fromOffset(dx, 0) }):Play()
             task.wait(0.04)
         end
@@ -1279,11 +1571,11 @@ local function showKeyScreen(onSuccess)
     local function submit()
         if busy then return end
         local k = box.Text
+        busy = true
         if validKey(k) then
-            busy = true
-            status.TextColor3 = GREEN
-            status.Text = "Ключ принят ✓"
-            TS:Create(boxStroke, TweenInfo.new(0.2), { Color = GREEN }):Play()
+            status.TextColor3 = K_OK
+            status.Text = "Ключ принят"
+            TS:Create(boxStroke, TweenInfo.new(0.2), { Color = K_OK }):Play()
             saveKey(k)
             task.wait(0.7)
             fadeOut(scr, 0.5)
@@ -1291,10 +1583,9 @@ local function showKeyScreen(onSuccess)
             scr:Destroy()
             onSuccess()
         else
-            busy = true
-            status.TextColor3 = RED
+            status.TextColor3 = K_BAD
             status.Text = (tostring(k):match("^%s*$")) and "Введите ключ" or "Неверный ключ"
-            TS:Create(boxStroke, TweenInfo.new(0.2), { Color = RED }):Play()
+            TS:Create(boxStroke, TweenInfo.new(0.2), { Color = K_BAD }):Play()
             shake()
             task.wait(0.4)
             busy = false
@@ -1308,7 +1599,7 @@ local function showKeyScreen(onSuccess)
 
     getKey.MouseButton1Click:Connect(function()
         local ok = pcall(function() setclipboard(CONFIG.KEY_LINK) end)
-        status.TextColor3 = ACCENT2
+        status.TextColor3 = K_DIM
         status.Text = ok and "Ссылка на Discord скопирована" or CONFIG.KEY_LINK
     end)
 end
