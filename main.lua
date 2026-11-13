@@ -1,5 +1,5 @@
 --[[
-    NOVA HUB v4.0  |  Xeno-compatible
+    NOVA HUB v4.1  |  Xeno-compatible
     Ключ • ESP • Aimbot • Хитбоксы • Fly • Noclip • Невидимость • Speed • Jump • FOV
 
     Ключ: NOVA-4X7K-9QM2   (меняется в CONFIG.KEYS ниже)
@@ -19,7 +19,7 @@ local Camera = workspace.CurrentCamera
 -- НАСТРОЙКИ (меняй тут)
 ---------------------------------------------------------------------
 local CONFIG = {
-    VERSION   = "v4.0",
+    VERSION   = "v4.1",
     KEYS      = { "NOVA-4X7K-9QM2" },                 -- допустимые ключи
     KEY_LINK  = "https://discord.gg/jJ6tx9hgGH",      -- где получить ключ
     SAVE_FILE = "nova_hub_key_v4.txt",                -- запоминание ключа
@@ -440,6 +440,36 @@ end)
 ---------------------------------------------------------------------
 local ghost = nil
 local HIDE_HEIGHT = 20000
+local GHOST_BIND = "NovaGhostCam"
+local updateGhost
+
+-- отключаем стандартное управление персонажем, пока работает призрак
+local function setControls(enabled)
+    pcall(function()
+        local scripts = LP:FindFirstChild("PlayerScripts")
+        local pm = scripts and scripts:FindFirstChild("PlayerModule")
+        if not pm then return end
+        local controls = require(pm):GetControls()
+        if enabled then controls:Enable() else controls:Disable() end
+    end)
+end
+
+local function unbindGhost()
+    pcall(function() RS:UnbindFromRenderStep(GHOST_BIND) end)
+end
+
+local ghostHint = make("Frame", {
+    AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -64),
+    Size = UDim2.fromOffset(470, 34), BackgroundColor3 = PANEL,
+    BorderSizePixel = 0, Visible = false,
+}, gui)
+corner(ghostHint, 17)
+make("UIStroke", { Thickness = 1, Color = OFF }, ghostHint)
+make("TextLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = TEXT,
+    Text = "Призрак:  WASD  •  Space / Ctrl  •  Shift — быстрее  •  ПКМ (держать) — осмотр",
+}, ghostHint)
 
 local function ghostOn()
     local char = LP.Character
@@ -471,6 +501,16 @@ local function ghostOn()
     hum.JumpPower = 0
 
     ghost = g
+
+    -- камера сразу остаётся на прежнем месте, а не улетает за телом
+    cam.CameraType = Enum.CameraType.Scriptable
+    cam.CFrame = CFrame.new(g.pos) * CFrame.fromOrientation(g.pitch, g.yaw, 0)
+    setControls(false)
+    ghostHint.Visible = true
+    -- приоритет выше стандартной камеры Roblox, чтобы она не перебивала нашу
+    RS:BindToRenderStep(GHOST_BIND, Enum.RenderPriority.Camera.Value + 1, function(dt)
+        updateGhost(dt)
+    end)
     return true
 end
 
@@ -478,6 +518,9 @@ local function ghostOff()
     local g = ghost
     if not g then return end
     ghost = nil
+    unbindGhost()
+    setControls(true)
+    ghostHint.Visible = false
 
     local char = LP.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -510,7 +553,7 @@ local function ghostOff()
     UIS.MouseBehavior = Enum.MouseBehavior.Default
 end
 
-local function updateGhost(dt)
+function updateGhost(dt)
     local g = ghost
     if not g then return end
     local cam = workspace.CurrentCamera
@@ -612,6 +655,9 @@ connect(LP.CharacterAdded, function()
     if state.inv then
         local g = ghost
         ghost = nil
+        unbindGhost()
+        setControls(true)
+        ghostHint.Visible = false
         if g then pcall(function() g.platform:Destroy() end) end
         pcall(function()
             workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
@@ -716,9 +762,6 @@ connect(RS.RenderStepped, function(dt)
     local char = LP.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-
-    -- Призрак
-    if ghost then updateGhost(dt) end
 
     -- ESP: дистанция
     if state.esp and root and not ghost then
@@ -1245,7 +1288,7 @@ local news = make("TextLabel", {
     Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = TEXT,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, LayoutOrder = nextOrder(tabMisc),
-    Text = "  • Хитбоксы двигаются вместе с игроком\n  • Аим: плавность, предсказание, Wall Check, захват цели\n  • Невидимость: тело прячется, ты летаешь камерой\n  • Новый ключ и спокойное окно ввода ключа\n  • Круг FOV можно скрыть",
+    Text = "  • Хитбоксы двигаются вместе с игроком\n  • Аим: плавность, предсказание, Wall Check, захват цели\n  • Невидимость: тело прячется, ты летаешь камерой\n  • Новый ключ и спокойное окно ввода ключа\n  • Круг FOV можно скрыть\n  • v4.1: камера призрака исправлена",
 }, tabMisc)
 corner(news, 10)
 make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 6) }, news)
