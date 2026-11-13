@@ -1,5 +1,5 @@
 --[[
-    NOVA HUB v4.1  |  Xeno-compatible
+    NOVA HUB v4.2  |  Xeno-compatible
     Ключ • ESP • Aimbot • Хитбоксы • Fly • Noclip • Невидимость • Speed • Jump • FOV
 
     Ключ: NOVA-4X7K-9QM2   (меняется в CONFIG.KEYS ниже)
@@ -19,7 +19,7 @@ local Camera = workspace.CurrentCamera
 -- НАСТРОЙКИ (меняй тут)
 ---------------------------------------------------------------------
 local CONFIG = {
-    VERSION   = "v4.1",
+    VERSION   = "v4.2",
     KEYS      = { "NOVA-4X7K-9QM2" },                 -- допустимые ключи
     KEY_LINK  = "https://discord.gg/jJ6tx9hgGH",      -- где получить ключ
     SAVE_FILE = "nova_hub_key_v4.txt",                -- запоминание ключа
@@ -66,6 +66,7 @@ local function connect(signal, fn)
 end
 
 local ready = false
+local ghost = nil
 local setters = {}
 local hintLabels = {}
 
@@ -423,7 +424,7 @@ connect(UIS.JumpRequest, function()
 end)
 
 connect(RS.Stepped, function()
-    if state.noclip and LP.Character then
+    if state.noclip and LP.Character and not ghost then
         for _, d in ipairs(LP.Character:GetDescendants()) do
             if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end
         end
@@ -438,7 +439,6 @@ end)
 -- При выключении появляешься на земле там, где была камера.
 -- «Сиденье»: старый способ (может не работать в части игр).
 ---------------------------------------------------------------------
-local ghost = nil
 local HIDE_HEIGHT = 20000
 local GHOST_BIND = "NovaGhostCam"
 local updateGhost
@@ -456,6 +456,15 @@ end
 
 local function unbindGhost()
     pcall(function() RS:UnbindFromRenderStep(GHOST_BIND) end)
+end
+
+-- большой невидимый пол прямо под спрятанным телом
+local function makeFloor(pos)
+    return make("Part", {
+        Name = "NovaGhostFloor", Anchored = true, CanCollide = true,
+        Transparency = 1, Size = Vector3.new(200, 6, 200),
+        Position = pos - Vector3.new(0, 6.5, 0),
+    }, workspace)
 end
 
 local ghostHint = make("Frame", {
@@ -488,11 +497,8 @@ local function ghostOn()
     }
 
     local hideCF = CFrame.new(root.Position + Vector3.new(0, HIDE_HEIGHT, 0))
-    g.platform = make("Part", {
-        Name = "NovaGhostPlatform", Anchored = true, CanCollide = true,
-        Transparency = 1, Size = Vector3.new(60, 2, 60),
-        Position = hideCF.Position - Vector3.new(0, 4, 0),
-    }, workspace)
+    g.hidePos = hideCF.Position
+    g.platform = makeFloor(g.hidePos)
 
     root.CFrame = hideCF
     root.AssemblyLinearVelocity = Vector3.zero
@@ -558,6 +564,17 @@ function updateGhost(dt)
     if not g then return end
     local cam = workspace.CurrentCamera
     cam.CameraType = Enum.CameraType.Scriptable
+
+    -- тело стоит на невидимом полу и никуда не падает и не уезжает
+    local char = LP.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not g.platform or not g.platform.Parent then g.platform = makeFloor(g.hidePos) end
+    if root then
+        if (root.Position - g.hidePos).Magnitude > 8 then
+            root.CFrame = CFrame.new(g.hidePos)
+        end
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
 
     if UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
         UIS.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
@@ -1261,8 +1278,8 @@ toggle(tabMove, "Infinite Jump", "Бесконечный прыжок", "ijump")
 -- Прочее
 section(tabMisc, "Невидимость")
 toggle(tabMisc, "Invisible", "Тело прячется, другие тебя не видят", "inv", setInvisible)
-cycle(tabMisc, "Режим", "Призрак — камера, Сиденье — старый способ", "invMode", {
-    { "ghost", "Призрак (камера)" }, { "seat", "Сиденье" },
+cycle(tabMisc, "Режим", "Свободный режим — камера, тело на невидимом полу", "invMode", {
+    { "ghost", "Свободный режим" }, { "seat", "Сиденье" },
 }, function()
     if state.inv then setters.inv(false) end
 end)
@@ -1288,7 +1305,7 @@ local news = make("TextLabel", {
     Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = TEXT,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, LayoutOrder = nextOrder(tabMisc),
-    Text = "  • Хитбоксы двигаются вместе с игроком\n  • Аим: плавность, предсказание, Wall Check, захват цели\n  • Невидимость: тело прячется, ты летаешь камерой\n  • Новый ключ и спокойное окно ввода ключа\n  • Круг FOV можно скрыть\n  • v4.1: камера призрака исправлена",
+    Text = "  • Хитбоксы двигаются вместе с игроком\n  • Аим: плавность, предсказание, Wall Check, захват цели\n  • Невидимость: тело прячется, ты летаешь камерой\n  • Новый ключ и спокойное окно ввода ключа\n  • Круг FOV можно скрыть\n  • v4.2: невидимый пол под телом, свободный режим",
 }, tabMisc)
 corner(news, 10)
 make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 6) }, news)
